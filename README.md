@@ -6,18 +6,37 @@ RoyalCity Contracts is a Foundry-based MVP for tokenized real estate investment 
 
 | Contract | Address | Explorer |
 |----------|---------|----------|
-| MockUSDC | `0xDf5fA05Eb22B2B68a7178d325E3b8b6027F6C0D1` | [Etherscan](https://sepolia.etherscan.io/address/0xdf5fa05eb22b2b68a7178d325e3b8b6027f6c0d1) |
-| RoyalCityRealEstate | `0x54574F15f751Ef56B6cE556c6D20a5D39bc4013f` | [Etherscan](https://sepolia.etherscan.io/address/0x54574f15f751ef56b6ce556c6d20a5d39bc4013f) |
+| MockUSDC | `0xDf5fA05Eb22B2B68a7178d325E3b8b6027F6C0D1` | [Etherscan ✓](https://sepolia.etherscan.io/address/0xdf5fa05eb22b2b68a7178d325e3b8b6027f6c0d1#code) |
+| RoyalCityRealEstate | `0x54574F15f751Ef56B6cE556c6D20a5D39bc4013f` | [Etherscan ✓](https://sepolia.etherscan.io/address/0x54574f15f751ef56b6ce556c6d20a5d39bc4013f#code) |
 
 **Network:** Ethereum Sepolia (chain ID `11155111`)
 
-**Demo flow:** property `#1` created → funding started → investor whitelisted → **100 shares invested** (10,000 mUSDC).
+**Status:** **End-to-end lifecycle verified on-chain** for property `#1` — create → fund to 100,000 mUSDC target → finalize → deposit 1,000 mUSDC revenue → claim pro-rata (500 mUSDC each to investor and treasury).
+
+Property `#1` terms: 1,000 shares at 100 mUSDC/share; per-investor cap 50,000 mUSDC (two whitelisted wallets filled the round).
+
+### Deployment
 
 | Step | Transaction |
 |------|-------------|
+| Deploy MockUSDC | [0x2018…3dc14](https://sepolia.etherscan.io/tx/0x201869648271fad2fe798a19c6ee02b219745c17084d1561d470a00b0bf3dc14) |
 | Deploy RoyalCity | [0x2230…5768a](https://sepolia.etherscan.io/tx/0x223080b2b2d9b2299e0a9eef49fa4a3a05e4944eacc2321182b5093e0ef5768a) |
-| Create property #1 | [0x8389…a843](https://sepolia.etherscan.io/tx/0x83891160e369ab3a8a09e727bc0998b9491aaf3ef27a55e934952de0aea8a843) |
-| **Invest 100 shares** | **[0xd82a…4f33](https://sepolia.etherscan.io/tx/0xd82ac14b3cfbf64a0a35f88d54c4260123d4b7ce109ab44d61c577cbad544f33)** |
+
+### Property #1 lifecycle
+
+| Step | Actor | Transaction |
+|------|-------|-------------|
+| Create property #1 | deployer | [0x8389…a843](https://sepolia.etherscan.io/tx/0x83891160e369ab3a8a09e727bc0998b9491aaf3ef27a55e934952de0aea8a843) |
+| Start funding | deployer | [0x9aea…b1ea](https://sepolia.etherscan.io/tx/0x9aea406074d92d86792ca26b13f1196415d7b7f84130db22af434410d659b1ea) |
+| Whitelist investor | deployer | [0x4b8a…5e89](https://sepolia.etherscan.io/tx/0x4b8aebfa36a3f19c9f99d8480afcec0ab8efda414da91552a77991a0e2af5e89) |
+| Invest 100 shares (10,000 mUSDC) | investor | [0xd82a…4f33](https://sepolia.etherscan.io/tx/0xd82ac14b3cfbf64a0a35f88d54c4260123d4b7ce109ab44d61c577cbad544f33) |
+| Invest 400 shares (40,000 mUSDC) | investor | [0xe696…8d55](https://sepolia.etherscan.io/tx/0xe696c38a12ce8b815fdf85ea98c21580b6132c522e7174b48b589fe09c328d55) |
+| Whitelist treasury (2nd investor) | deployer | [0x7bb9…4521](https://sepolia.etherscan.io/tx/0x7bb91c52a1b9869225984212aad5136a0986d3a8336f266ccecc3f12ba244521) |
+| Invest 500 shares (50,000 mUSDC) | treasury | [0x8c7e…f892](https://sepolia.etherscan.io/tx/0x8c7e2578e1dd7a5e256a7d51070b1b02adf5bdad2bee218c865892eefc03f892) |
+| Finalize funding | deployer | [0x8a5e…fa22](https://sepolia.etherscan.io/tx/0x8a5e74aa1c75669c05339fe8c571d425064406ee075ad3401210a273f8affa22) |
+| Deposit revenue (1,000 mUSDC) | deployer | [0x5b2a…8db4](https://sepolia.etherscan.io/tx/0x5b2ab32a88d364edc22d2481dd1b60661e779a88999f2c0c147da7f492088db4) |
+| Claim revenue (500 mUSDC) | investor | [0xbab1…8ff0](https://sepolia.etherscan.io/tx/0xbab1e05986b25af656420272b10a1a18f9f6d55de9812543f98aa40587768ff0) |
+| Claim revenue (500 mUSDC) | treasury | [0x97d1…d7f7](https://sepolia.etherscan.io/tx/0x97d10b9f61dc54e5f176ff8630650ec6444047bad24639ee4fc1a6092bf2d7f7) |
 
 ![Sepolia invest transaction](docs/sepolia-invest-tx.png)
 
