@@ -2,6 +2,27 @@
 
 RoyalCity Contracts is a Foundry-based MVP for tokenized real estate investment flows. It is designed as a testnet-ready and audit-friendly starting point for a small team, not as a finished production RWA system.
 
+## Deployed on Sepolia (testnet rehearsal)
+
+| Contract | Address | Explorer |
+|----------|---------|----------|
+| MockUSDC | `0xDf5fA05Eb22B2B68a7178d325E3b8b6027F6C0D1` | [Etherscan](https://sepolia.etherscan.io/address/0xdf5fa05eb22b2b68a7178d325e3b8b6027f6c0d1) |
+| RoyalCityRealEstate | `0x54574F15f751Ef56B6cE556c6D20a5D39bc4013f` | [Etherscan](https://sepolia.etherscan.io/address/0x54574f15f751ef56b6ce556c6d20a5d39bc4013f) |
+
+**Network:** Ethereum Sepolia (chain ID `11155111`)
+
+**Demo flow:** property `#1` created → funding started → investor whitelisted → **100 shares invested** (10,000 mUSDC).
+
+| Step | Transaction |
+|------|-------------|
+| Deploy RoyalCity | [0x2230…5768a](https://sepolia.etherscan.io/tx/0x223080b2b2d9b2299e0a9eef49fa4a3a05e4944eacc2321182b5093e0ef5768a) |
+| Create property #1 | [0x8389…a843](https://sepolia.etherscan.io/tx/0x83891160e369ab3a8a09e727bc0998b9491aaf3ef27a55e934952de0aea8a843) |
+| **Invest 100 shares** | **[0xd82a…4f33](https://sepolia.etherscan.io/tx/0xd82ac14b3cfbf64a0a35f88d54c4260123d4b7ce109ab44d61c577cbad544f33)** |
+
+![Sepolia invest transaction](docs/sepolia-invest-tx.png)
+
+To reproduce locally, copy [`env.sample`](env.sample) to `.env` and follow the deployment section below.
+
 ## What It Implements
 
 - One ERC1155-based contract manages many properties.
@@ -223,6 +244,28 @@ Run only invariant tests:
 
 ```shell
 forge test --match-contract RoyalCityInvariantTest
+```
+
+### Environment setup
+
+Copy [`env.sample`](env.sample) to `.env` and fill in your values. Foundry loads `.env` from the project root when running scripts.
+
+```shell
+cp env.sample .env
+```
+
+Required for the default testnet flow:
+
+- `PRIVATE_KEY` — deployer key with `0x` prefix
+- `RPC_URL` — e.g. Sepolia Infura URL
+- `TREASURY` — treasury/deployer address
+- `PAYMENT_TOKEN` — set after `DeployMockUSDC`
+- `ROYALCITY_CONTRACT` — set after `DeployRoyalCity`
+
+Deploy MockUSDC (testnet payment token):
+
+```shell
+forge script script/DeployMockUSDC.s.sol:DeployMockUSDC --fork-url $RPC_URL --broadcast -vvvv
 ```
 
 Deploy:
