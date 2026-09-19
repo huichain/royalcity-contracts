@@ -25,18 +25,18 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     }
 
     struct Property {
-        uint256 totalShares;
-        uint256 sharePrice;
-        uint256 fundingTarget;
-        uint256 minInvestment;
-        uint256 maxInvestment;
-        uint256 fundingDeadline;
-        uint256 soldShares;
-        uint256 raisedAmount;
-        uint256 revenueDeposited;
-        PropertyState state;
-        bool paused;
-        string metadataURI;
+        uint256 totalShares; // Max share supply for this property (ERC1155 id)
+        uint256 sharePrice; // PAYMENT_TOKEN amount required per share
+        uint256 fundingTarget; // Target raise; finalize when raisedAmount reaches this
+        uint256 minInvestment; // Minimum payment amount per invest call
+        uint256 maxInvestment; // Cap on cumulative investedAmount per investor
+        uint256 fundingDeadline; // Unix timestamp after which invest is rejected
+        uint256 soldShares; // Shares minted so far
+        uint256 raisedAmount; // PAYMENT_TOKEN collected during funding
+        uint256 revenueDeposited; // Lifetime revenue deposited for claims
+        PropertyState state; // Draft / Funding / Funded / Cancelled / Closed
+        bool paused; // Per-property pause (invest / revenue blocked when true)
+        string metadataURI; // Off-chain metadata pointer for this property
     }
 
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
