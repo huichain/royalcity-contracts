@@ -72,6 +72,7 @@ contract RoyalCityRealEstateTest is Test {
         assertEq(property.maxInvestment, DEFAULT_MAX_INVESTMENT);
         assertEq(property.fundingDeadline, deadline);
         assertFalse(property.paused);
+        assertEq(property.minKycTier, 1);
         assertEq(uint8(property.state), uint8(RoyalCityRealEstate.PropertyState.Funding));
     }
 
@@ -123,6 +124,7 @@ contract RoyalCityRealEstateTest is Test {
         assertEq(property.minInvestment, 24 * USDC);
         assertEq(property.maxInvestment, 800 * USDC);
         assertEq(property.fundingDeadline, newDeadline);
+        assertEq(property.minKycTier, 1);
     }
 
     function test_RevertWhen_UpdatingTermsAfterFundingStarts() public {
@@ -308,6 +310,86 @@ contract RoyalCityRealEstateTest is Test {
 
         assertEq(realEstate.balanceOf(outsider, propertyId), 5);
         assertEq(realEstate.balanceOf(investor, propertyId), 55);
+    }
+
+    function test_SetWhitelistSetsKycTierOne() public {
+        assertEq(realEstate.kycTier(investor), 1);
+        assertTrue(realEstate.whitelisted(investor));
+
+        realEstate.setKycTier(outsider, 2);
+        assertEq(realEstate.kycTier(outsider), 2);
+        assertTrue(realEstate.whitelisted(outsider));
+
+        realEstate.setWhitelist(outsider, false);
+        assertEq(realEstate.kycTier(outsider), 0);
+        assertFalse(realEstate.whitelisted(outsider));
+    }
+
+    function test_RevertWhen_KycTierBelowPropertyMinimum() public {
+        uint256 propertyId = realEstate.createProperty(
+            "ipfs://kyc-gated",
+            DEFAULT_TOTAL_SHARES,
+            DEFAULT_SHARE_PRICE,
+            DEFAULT_FUNDING_TARGET,
+            DEFAULT_MIN_INVESTMENT,
+            DEFAULT_MAX_INVESTMENT,
+            block.timestamp + 30 days
+        );
+        realEstate.setDraftMinKycTier(propertyId, 2);
+        realEstate.startFunding(propertyId);
+
+        vm.prank(investor);
+        vm.expectRevert(RoyalCityRealEstate.InsufficientKyc.selector);
+        realEstate.invest(propertyId, 10);
+
+        realEstate.setKycTier(investor, 2);
+
+        vm.prank(investor);
+        realEstate.invest(propertyId, 10);
+
+        assertEq(realEstate.balanceOf(investor, propertyId), 10);
+    }
+
+    function test_RevertWhen_SetDraftMinKycTierAfterFundingStarts() public {
+        uint256 propertyId = _createFundingProperty();
+
+        vm.expectRevert(RoyalCityRealEstate.InvalidState.selector);
+        realEstate.setDraftMinKycTier(propertyId, 2);
+    }
+
+    function test_TransferRequiresReceiverToMeetMinKycTier() public {
+        uint256 propertyId = realEstate.createProperty(
+            "ipfs://kyc-transfer",
+            DEFAULT_TOTAL_SHARES,
+            DEFAULT_SHARE_PRICE,
+            DEFAULT_FUNDING_TARGET,
+            DEFAULT_MIN_INVESTMENT,
+            DEFAULT_MAX_INVESTMENT,
+            block.timestamp + 30 days
+        );
+        realEstate.setDraftMinKycTier(propertyId, 2);
+        realEstate.setKycTier(investor, 2);
+        realEstate.setKycTier(secondInvestor, 2);
+        realEstate.startFunding(propertyId);
+
+        vm.prank(investor);
+        realEstate.invest(propertyId, 60);
+        vm.prank(secondInvestor);
+        realEstate.invest(propertyId, 40);
+        realEstate.finalizeFunding(propertyId);
+
+        realEstate.setWhitelist(outsider, true);
+
+        vm.prank(investor);
+        vm.expectRevert(RoyalCityRealEstate.InsufficientKyc.selector);
+        realEstate.safeTransferFrom(investor, outsider, propertyId, 5, "");
+
+        realEstate.setKycTier(outsider, 2);
+
+        vm.prank(investor);
+        realEstate.safeTransferFrom(investor, outsider, propertyId, 5, "");
+
+        assertEq(realEstate.balanceOf(outsider, propertyId), 5);
     }
 
     function test_PauseBlocksInvestingAndTransfersButNotRefunds() public {

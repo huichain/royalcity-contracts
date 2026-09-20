@@ -47,7 +47,8 @@ To reproduce locally, copy [`env.sample`](env.sample) to `.env` and follow the d
 - One ERC1155-based contract manages many properties.
 - Each `propertyId` represents the shares for one real estate asset.
 - Investors pay a fixed ERC20 payment token, such as USDC, to buy property shares.
-- Only whitelisted investors can buy, receive transferred shares, and claim revenue.
+- Only investors with a KYC tier at or above the property minimum can buy, receive transferred shares, claim revenue, or redeem.
+- `setWhitelist` remains as a convenience for tier `1` / `0`; compliance can also call `setKycTier`.
 - A property moves through `Draft`, `Funding`, `Funded`, `Cancelled`, and `Closed`.
 - Each property has a funding deadline, minimum investment, maximum per-investor investment, and per-property pause switch.
 - Cancelled funding rounds allow investors to refund their principal.
@@ -97,9 +98,9 @@ The map below is intentionally broad rather than deeply detailed. It shows the p
 │                                                                              │
 │  ┌──────────────────────┐   ┌──────────────────────┐   ┌──────────────────┐ │
 │  │ C1. Compliance Gate   │   │ S1. Safety Controls   │   │ A1. Audit Surface│ │
-│  │ - whitelist           │   │ - global pause        │   │ - events         │ │
+│  │ - KYC tiers           │   │ - global pause        │   │ - events         │ │
 │  │ - role separation     │   │ - property pause      │   │ - invariants     │ │
-│  │ - future KYC tiers    │   │ - reentrancy guard    │   │ - runbooks       │ │
+│  │ - minKycTier / property│  │ - reentrancy guard    │   │ - runbooks       │ │
 │  └──────────────────────┘   └──────────────────────┘   └──────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────────┘
 
@@ -173,7 +174,7 @@ flowchart TD
 
 - `DEFAULT_ADMIN_ROLE`: Can pause/unpause and manage roles. It uses delayed two-step transfer rules.
 - `MANAGER_ROLE`: Can create properties, start/cancel/finalize funding, and close properties.
-- `COMPLIANCE_ROLE`: Can add or remove whitelist status.
+- `COMPLIANCE_ROLE`: Can set `kycTier` (and `setWhitelist` as tier 1 / 0).
 - `TREASURY_ROLE`: Can deposit revenue.
 
 The constructor sets the deployer as the initial default admin with a configurable admin transfer delay. It also grants manager and compliance roles to the deployer, and treasury role to the configured treasury address.
@@ -182,7 +183,7 @@ The constructor sets the deployer as the initial default admin with a configurab
 flowchart TD
   Admin["Default Admin"] -->|"delayed admin transfer and role management"| Contract["RoyalCityRealEstate"]
   Manager["Manager"] -->|"create and manage properties"| Contract
-  Compliance["Compliance"] -->|"setWhitelist"| Contract
+  Compliance["Compliance"] -->|"setKycTier / setWhitelist"| Contract
   Treasury["Treasury"] -->|"depositRevenue"| Contract
   Investor["Whitelisted Investor"] -->|"invest refund claim transfer"| Contract
 ```
@@ -215,7 +216,7 @@ The Timelock pattern means a Safe proposes a privileged action, waits `TIMELOCK_
 1. Manager creates a property with total shares, share price, funding target, min/max investment, deadline, and metadata URI.
 2. While the property is still `Draft`, manager can correct terms with `updateDraftPropertyTerms`.
 3. Manager starts funding. Terms become locked after this point.
-4. Compliance whitelists eligible investors.
+4. Compliance assigns KYC tiers (or whitelist convenience) to eligible investors.
 5. Investors approve USDC and call `invest(propertyId, shares)`.
 6. The contract rejects expired funding, below-minimum investments, above-maximum cumulative investments, and paused properties.
 7. If funding succeeds, manager calls `finalizeFunding`, which sends principal to treasury.
@@ -406,7 +407,7 @@ Use this runbook for testnet rehearsals before any production deployment.
 
 This MVP keeps the on-chain design intentionally conservative:
 
-- Transfers require both sender and receiver to be whitelisted.
+- Transfers require both sender and receiver to meet the property `minKycTier`.
 - Transfers are only allowed after a property is `Funded` or `Closed`.
 - Global `pause` and per-property pause block investing, transfers, and revenue deposits, but refunds, claims, and redeems are left available to reduce stuck-fund risk.
 - Funding deadlines and min/max investment limits are enforced on-chain.

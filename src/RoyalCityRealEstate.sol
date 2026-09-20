@@ -37,6 +37,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
         uint256 redemptionPool; // PAYMENT_TOKEN reserved for Closed-property share redemption
         PropertyState state; // Draft / Funding / Funded / Cancelled / Closed
         bool paused; // Per-property pause (invest / revenue blocked when true)
+        uint8 minKycTier; // Minimum kycTier required to invest, transfer, claim, or redeem
         string metadataURI; // Off-chain metadata pointer for this property
     }
 
@@ -52,6 +53,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
 
     mapping(uint256 propertyId => Property property) internal _properties;
     mapping(address account => bool approved) public whitelisted;
+    mapping(address account => uint8 tier) public kycTier;
     mapping(uint256 propertyId => mapping(address account => uint256 amount)) public investedAmount;
     mapping(uint256 propertyId => uint256 rewardPerShare) public revenuePerShare;
     mapping(uint256 propertyId => mapping(address account => uint256 rewardDebt)) public userRevenueDebt;
@@ -67,6 +69,8 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     error InvalidState();
     error InvalidAmount();
     error NotWhitelisted();
+    error InsufficientKyc();
+    error InvalidKycTier();
     error SoldOut();
     error InvestmentBelowMinimum();
     error InvestmentAboveMaximum();
@@ -82,6 +86,8 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
 
     event TreasuryUpdated(address indexed treasury);
     event WhitelistUpdated(address indexed account, bool approved);
+    event KycTierUpdated(address indexed account, uint8 tier);
+    event PropertyMinKycTierUpdated(uint256 indexed propertyId, uint8 minKycTier);
     event PropertyCreated(
         uint256 indexed propertyId,
         uint256 totalShares,
@@ -142,11 +148,22 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     }
 
     function setWhitelist(address account, bool approved) external onlyRole(COMPLIANCE_ROLE) {
-        if (account == address(0)) revert ZeroAddress();
+        _setKycTier(account, approved ? 1 : 0);
+    }
 
-        whitelisted[account] = approved;
+    function setKycTier(address account, uint8 tier) external onlyRole(COMPLIANCE_ROLE) {
+        _setKycTier(account, tier);
+    }
 
-        emit WhitelistUpdated(account, approved);
+    function setDraftMinKycTier(uint256 propertyId, uint8 minKycTier_) external onlyRole(MANAGER_ROLE) {
+        if (minKycTier_ == 0) revert InvalidKycTier();
+
+        Property storage property = _getExistingProperty(propertyId);
+        if (property.state != PropertyState.Draft) revert InvalidState();
+
+        property.minKycTier = minKycTier_;
+
+        emit PropertyMinKycTierUpdated(propertyId, minKycTier_);
     }
 
     function createProperty(
@@ -174,6 +191,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
             redemptionPool: 0,
             state: PropertyState.Draft,
             paused: false,
+            minKycTier: 1,
             metadataURI: metadataURI
         });
 
@@ -272,10 +290,10 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     }
 
     function invest(uint256 propertyId, uint256 shares) external nonReentrant whenNotPaused {
-        if (!whitelisted[msg.sender]) revert NotWhitelisted();
         if (shares == 0) revert InvalidAmount();
 
         Property storage property = _getExistingProperty(propertyId);
+        _requireKyc(msg.sender, property);
         if (property.paused) revert PropertyPaused();
         if (property.state != PropertyState.Funding) revert InvalidState();
         if (block.timestamp > property.fundingDeadline) revert FundingExpired();
@@ -354,10 +372,10 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     }
 
     function redeem(uint256 propertyId, uint256 shares) external nonReentrant {
-        if (!whitelisted[msg.sender]) revert NotWhitelisted();
         if (shares == 0) revert InvalidAmount();
 
         Property storage property = _getExistingProperty(propertyId);
+        _requireKyc(msg.sender, property);
         if (property.state != PropertyState.Closed) revert InvalidState();
         if (balanceOf(msg.sender, propertyId) < shares) revert InvalidAmount();
 
@@ -386,9 +404,9 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     }
 
     function claimRevenue(uint256 propertyId) external nonReentrant {
-        if (!whitelisted[msg.sender]) revert NotWhitelisted();
+        Property storage property = _getExistingProperty(propertyId);
+        _requireKyc(msg.sender, property);
 
-        _getExistingProperty(propertyId);
         _settleRevenue(propertyId, msg.sender);
 
         uint256 amount = accruedRevenue[propertyId][msg.sender];
@@ -452,11 +470,11 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
 
         if (from != address(0) && to != address(0)) {
             if (paused()) revert EnforcedPause();
-            if (!whitelisted[from] || !whitelisted[to]) revert NotWhitelisted();
-
             // RWA shares are only transferable after funding has been finalized.
             for (uint256 i = 0; i < ids.length; i++) {
                 Property storage property = _properties[ids[i]];
+                _requireKyc(from, property);
+                _requireKyc(to, property);
                 if (property.paused) revert PropertyPaused();
 
                 PropertyState state = property.state;
@@ -500,6 +518,23 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
         }
 
         userRevenueDebt[propertyId][account] = currentRevenuePerShare;
+    }
+
+    function _setKycTier(address account, uint8 tier) internal {
+        if (account == address(0)) revert ZeroAddress();
+
+        kycTier[account] = tier;
+        bool approved = tier > 0;
+        whitelisted[account] = approved;
+
+        emit KycTierUpdated(account, tier);
+        emit WhitelistUpdated(account, approved);
+    }
+
+    function _requireKyc(address account, Property storage property) internal view {
+        uint8 tier = kycTier[account];
+        if (tier == 0) revert NotWhitelisted();
+        if (tier < property.minKycTier) revert InsufficientKyc();
     }
 
     function _getExistingProperty(uint256 propertyId) internal view returns (Property storage property) {
