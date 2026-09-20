@@ -19,6 +19,9 @@ artifacts/
 .venv/
 .venv-slither/
 
+# Agent session scratch (task briefs, review diffs, SDD ledger)
+.superpowers/
+
 # Editor / OS
 .vscode/
 .idea/

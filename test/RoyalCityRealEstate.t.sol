@@ -385,6 +385,138 @@ contract RoyalCityRealEstateTest is Test {
         assertEq(realEstate.investedAmount(propertyId, investor), expectedCost);
     }
 
+    function test_RevertWhen_RedeemWhileFunded() public {
+        uint256 propertyId = _fullyFundProperty();
+        realEstate.finalizeFunding(propertyId);
+
+        vm.prank(investor);
+        vm.expectRevert(RoyalCityRealEstate.InvalidState.selector);
+        realEstate.redeem(propertyId, 1);
+    }
+
+    function test_RevertWhen_RedeemWithEmptyPool() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.prank(investor);
+        vm.expectRevert(RoyalCityRealEstate.NothingToRedeem.selector);
+        realEstate.redeem(propertyId, 10);
+    }
+
+    function test_RevertWhen_NonWhitelistedRedeems() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.prank(treasury);
+        realEstate.depositRedemption(propertyId, 1_000 * USDC);
+
+        vm.prank(outsider);
+        vm.expectRevert(RoyalCityRealEstate.NotWhitelisted.selector);
+        realEstate.redeem(propertyId, 1);
+    }
+
+    function test_RevertWhen_RedeemZeroShares() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.prank(treasury);
+        realEstate.depositRedemption(propertyId, 1_000 * USDC);
+
+        vm.prank(investor);
+        vm.expectRevert(RoyalCityRealEstate.InvalidAmount.selector);
+        realEstate.redeem(propertyId, 0);
+    }
+
+    function test_DepositRedemptionAndRedeemProRata() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.prank(treasury);
+        realEstate.depositRedemption(propertyId, 1_000 * USDC);
+
+        uint256 investorBefore = usdc.balanceOf(investor);
+        uint256 secondBefore = usdc.balanceOf(secondInvestor);
+
+        vm.prank(investor);
+        realEstate.redeem(propertyId, 60);
+
+        vm.prank(secondInvestor);
+        realEstate.redeem(propertyId, 40);
+
+        assertEq(usdc.balanceOf(investor), investorBefore + 600 * USDC);
+        assertEq(usdc.balanceOf(secondInvestor), secondBefore + 400 * USDC);
+        assertEq(realEstate.balanceOf(investor, propertyId), 0);
+        assertEq(realEstate.balanceOf(secondInvestor, propertyId), 0);
+        assertEq(realEstate.getProperty(propertyId).redemptionPool, 0);
+    }
+
+    function test_RedeemAutoClaimsPendingRevenue() public {
+        uint256 propertyId = _fullyFundProperty();
+        realEstate.finalizeFunding(propertyId);
+
+        vm.prank(treasury);
+        realEstate.depositRevenue(propertyId, 100 * USDC);
+
+        realEstate.closeProperty(propertyId);
+
+        vm.prank(treasury);
+        realEstate.depositRedemption(propertyId, 1_000 * USDC);
+
+        uint256 before = usdc.balanceOf(investor);
+
+        vm.prank(investor);
+        realEstate.redeem(propertyId, 60);
+
+        // 60% of 100 revenue + 60% of 1000 redemption
+        assertEq(usdc.balanceOf(investor), before + 60 * USDC + 600 * USDC);
+        assertEq(realEstate.pendingRevenue(propertyId, investor), 0);
+        assertEq(realEstate.balanceOf(investor, propertyId), 0);
+    }
+
+    function test_PartialRedeemUpdatesPool() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.prank(treasury);
+        realEstate.depositRedemption(propertyId, 1_000 * USDC);
+
+        vm.prank(investor);
+        realEstate.redeem(propertyId, 30); // half of investor's 60
+
+        assertEq(realEstate.balanceOf(investor, propertyId), 30);
+        // payout = 30 * 1000 / 100 = 300; pool left 700
+        assertEq(realEstate.getProperty(propertyId).redemptionPool, 700 * USDC);
+    }
+
+    function test_PauseDoesNotBlockRedeem() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.prank(treasury);
+        realEstate.depositRedemption(propertyId, 1_000 * USDC);
+
+        realEstate.pause();
+        realEstate.setPropertyPaused(propertyId, true);
+
+        vm.prank(investor);
+        realEstate.redeem(propertyId, 60);
+
+        assertEq(realEstate.balanceOf(investor, propertyId), 0);
+    }
+
+    function test_RevertWhen_UnauthorizedDepositRedemption() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.prank(outsider);
+        vm.expectRevert(RoyalCityRealEstate.UnauthorizedDepositor.selector);
+        realEstate.depositRedemption(propertyId, 100 * USDC);
+    }
+
+    function test_MultipleRedemptionDepositsAccumulate() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.prank(treasury);
+        realEstate.depositRedemption(propertyId, 400 * USDC);
+        vm.prank(treasury);
+        realEstate.depositRedemption(propertyId, 600 * USDC);
+
+        assertEq(realEstate.getProperty(propertyId).redemptionPool, 1_000 * USDC);
+    }
+
     function _createFundingProperty() internal returns (uint256 propertyId) {
         propertyId = realEstate.createProperty(
             "ipfs://property-1",
@@ -406,5 +538,11 @@ contract RoyalCityRealEstateTest is Test {
 
         vm.prank(secondInvestor);
         realEstate.invest(propertyId, 40);
+    }
+
+    function _closeFundedProperty() internal returns (uint256 propertyId) {
+        propertyId = _fullyFundProperty();
+        realEstate.finalizeFunding(propertyId);
+        realEstate.closeProperty(propertyId);
     }
 }

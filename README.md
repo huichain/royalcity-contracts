@@ -52,6 +52,7 @@ To reproduce locally, copy [`env.sample`](env.sample) to `.env` and follow the d
 - Each property has a funding deadline, minimum investment, maximum per-investor investment, and per-property pause switch.
 - Cancelled funding rounds allow investors to refund their principal.
 - Funded properties can receive revenue deposits and distribute them pro rata by share balance.
+- Closed properties can receive a redemption pool deposit; investors burn shares via `redeem` for a pro-rata payout (pending revenue is paid first).
 - Admin, manager, compliance, and treasury permissions are separated with OpenZeppelin access control.
 - The default admin uses a delayed two-step transfer flow via `AccessControlDefaultAdminRules`.
 
@@ -91,7 +92,7 @@ The map below is intentionally broad rather than deeply detailed. It shows the p
 │  │ F1. Funding Vault     │   │ R1. Revenue Engine    │   │ E1. Exit Layer   │ │
 │  │ - collect USDC        │   │ - revenue deposits    │   │ - refund path    │ │
 │  │ - finalize principal  │   │ - reward per share    │   │ - close property │ │
-│  │ - cancelled refunds   │   │ - claim revenue       │   │ - future redeem  │ │
+│  │ - cancelled refunds   │   │ - claim revenue       │   │ - redeem after close  │ │
 │  └──────────────────────┘   └──────────────────────┘   └──────────────────┘ │
 │                                                                              │
 │  ┌──────────────────────┐   ┌──────────────────────┐   ┌──────────────────┐ │
@@ -221,6 +222,9 @@ The Timelock pattern means a Safe proposes a privileged action, waits `TIMELOCK_
 8. Treasury deposits rental or other revenue with `depositRevenue`.
 9. Investors call `claimRevenue` to receive their pro rata revenue.
 10. If funding is cancelled before finalization, investors call `refund`.
+11. Manager closes a funded property with `closeProperty`.
+12. Treasury deposits a redemption pool with `depositRedemption`.
+13. Investors call `redeem(propertyId, shares)` to burn shares and receive pro-rata PAYMENT_TOKEN (unclaimed revenue is settled automatically).
 
 ```mermaid
 flowchart TD
@@ -236,6 +240,9 @@ flowchart TD
   Finalize --> Principal["principal sent to treasury"]
   Principal --> Revenue["treasury deposits revenue"]
   Revenue --> Claim["investors claim pro rata revenue"]
+  Finalize --> Close["closeProperty"]
+  Close --> RedeemDeposit["depositRedemption"]
+  RedeemDeposit --> Redeem["investors redeem shares"]
   Cancel --> Refund["investors refund principal"]
 ```
 
@@ -401,7 +408,7 @@ This MVP keeps the on-chain design intentionally conservative:
 
 - Transfers require both sender and receiver to be whitelisted.
 - Transfers are only allowed after a property is `Funded` or `Closed`.
-- Global `pause` and per-property pause block investing, transfers, and revenue deposits, but refunds and claims are left available to reduce stuck-fund risk.
+- Global `pause` and per-property pause block investing, transfers, and revenue deposits, but refunds, claims, and redeems are left available to reduce stuck-fund risk.
 - Funding deadlines and min/max investment limits are enforced on-chain.
 - Property terms can only be changed while the property is `Draft`; once funding starts, terms are locked.
 - Default admin ownership uses a delayed two-step transfer instead of direct `grantRole`.

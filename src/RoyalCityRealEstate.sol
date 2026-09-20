@@ -34,6 +34,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
         uint256 soldShares; // Shares minted so far
         uint256 raisedAmount; // PAYMENT_TOKEN collected during funding
         uint256 revenueDeposited; // Lifetime revenue deposited for claims
+        uint256 redemptionPool; // PAYMENT_TOKEN reserved for Closed-property share redemption
         PropertyState state; // Draft / Funding / Funded / Cancelled / Closed
         bool paused; // Per-property pause (invest / revenue blocked when true)
         string metadataURI; // Off-chain metadata pointer for this property
@@ -75,6 +76,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     error RefundUnavailable();
     error NothingToRefund();
     error NothingToClaim();
+    error NothingToRedeem();
     error NoShares();
     error UnauthorizedDepositor();
 
@@ -109,6 +111,8 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     event Refunded(uint256 indexed propertyId, address indexed investor, uint256 amount);
     event RevenueDeposited(uint256 indexed propertyId, address indexed depositor, uint256 amount);
     event RevenueClaimed(uint256 indexed propertyId, address indexed investor, uint256 amount);
+    event RedemptionDeposited(uint256 indexed propertyId, address indexed depositor, uint256 amount);
+    event Redeemed(uint256 indexed propertyId, address indexed investor, uint256 shares, uint256 amount);
 
     constructor(address paymentToken_, address treasury_, string memory defaultURI, uint48 defaultAdminDelay)
         ERC1155(defaultURI)
@@ -167,6 +171,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
             soldShares: 0,
             raisedAmount: 0,
             revenueDeposited: 0,
+            redemptionPool: 0,
             state: PropertyState.Draft,
             paused: false,
             metadataURI: metadataURI
@@ -331,6 +336,53 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
         PAYMENT_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
 
         emit RevenueDeposited(propertyId, msg.sender, amount);
+    }
+
+    function depositRedemption(uint256 propertyId, uint256 amount) external nonReentrant {
+        if (!hasRole(TREASURY_ROLE, msg.sender) && !hasRole(MANAGER_ROLE, msg.sender)) {
+            revert UnauthorizedDepositor();
+        }
+        if (amount == 0) revert InvalidAmount();
+
+        Property storage property = _getExistingProperty(propertyId);
+        if (property.state != PropertyState.Closed) revert InvalidState();
+
+        property.redemptionPool += amount;
+        PAYMENT_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
+
+        emit RedemptionDeposited(propertyId, msg.sender, amount);
+    }
+
+    function redeem(uint256 propertyId, uint256 shares) external nonReentrant {
+        if (!whitelisted[msg.sender]) revert NotWhitelisted();
+        if (shares == 0) revert InvalidAmount();
+
+        Property storage property = _getExistingProperty(propertyId);
+        if (property.state != PropertyState.Closed) revert InvalidState();
+        if (balanceOf(msg.sender, propertyId) < shares) revert InvalidAmount();
+
+        _settleRevenue(propertyId, msg.sender);
+
+        uint256 revenueAmount = accruedRevenue[propertyId][msg.sender];
+        if (revenueAmount != 0) {
+            accruedRevenue[propertyId][msg.sender] = 0;
+            PAYMENT_TOKEN.safeTransfer(msg.sender, revenueAmount);
+            emit RevenueClaimed(propertyId, msg.sender, revenueAmount);
+        }
+
+        if (property.redemptionPool == 0) revert NothingToRedeem();
+
+        uint256 supply = totalSupply(propertyId);
+        if (supply == 0) revert NoShares();
+
+        uint256 payout = (shares * property.redemptionPool) / supply;
+        if (payout == 0) revert NothingToRedeem();
+
+        property.redemptionPool -= payout;
+        _burn(msg.sender, propertyId, shares);
+        PAYMENT_TOKEN.safeTransfer(msg.sender, payout);
+
+        emit Redeemed(propertyId, msg.sender, shares, payout);
     }
 
     function claimRevenue(uint256 propertyId) external nonReentrant {
