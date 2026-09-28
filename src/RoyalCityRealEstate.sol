@@ -56,6 +56,7 @@ contract RoyalCityRealEstate is
     bytes32 public constant TREASURY_ROLE = keccak256("TREASURY_ROLE");
 
     uint256 internal constant REWARD_PRECISION = 1e24;
+    uint256 internal constant BPS = 10_000;
 
     IERC20 public PAYMENT_TOKEN;
     address public treasury;
@@ -69,6 +70,8 @@ contract RoyalCityRealEstate is
     mapping(uint256 propertyId => uint256 rewardPerShare) public revenuePerShare; // Cumulative revenue per share, scaled by REWARD_PRECISION
     mapping(uint256 propertyId => mapping(address account => uint256 rewardDebt)) public userRevenueDebt; // revenuePerShare already settled for this account
     mapping(uint256 propertyId => mapping(address account => uint256 accruedRevenue)) public accruedRevenue; // Settled revenue not yet claimed
+    /// @notice Protocol cut of rental deposits, in basis points. 10_000 = 100%. Default 0.
+    uint256 public managementFeeBps;
 
     error ZeroAddress();
     error InvalidProperty();
@@ -133,6 +136,7 @@ contract RoyalCityRealEstate is
     event RedemptionDeposited(uint256 indexed propertyId, address indexed depositor, uint256 amount);
     event Redeemed(uint256 indexed propertyId, address indexed investor, uint256 shares, uint256 amount);
     event NavOracleUpdated(address indexed navOracle);
+    event ManagementFeeCollected(uint256 indexed propertyId, uint256 fee);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -191,6 +195,11 @@ contract RoyalCityRealEstate is
         property.minKycTier = minKycTier_;
 
         emit PropertyMinKycTierUpdated(propertyId, minKycTier_);
+    }
+
+    function setManagementFeeBps(uint256 managementFeeBps_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (managementFeeBps_ > BPS) revert InvalidAmount();
+        managementFeeBps = managementFeeBps_;
     }
 
     function setNavOracle(IRoyalCityNavOracle navOracle_) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -380,13 +389,24 @@ contract RoyalCityRealEstate is
         uint256 currentSupply = totalSupply(propertyId);
         if (currentSupply == 0) revert NoShares();
 
+        uint256 fee = (amount * managementFeeBps) / BPS;
+        uint256 net = amount - fee;
+
         // Cumulative reward-per-share avoids iterating over all investors when revenue arrives.
-        property.revenueDeposited += amount;
-        revenuePerShare[propertyId] += (amount * REWARD_PRECISION) / currentSupply;
+        if (net != 0) {
+            property.revenueDeposited += net;
+            revenuePerShare[propertyId] += (net * REWARD_PRECISION) / currentSupply;
+        }
 
         PAYMENT_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
+        if (fee != 0) {
+            PAYMENT_TOKEN.safeTransfer(treasury, fee);
+        }
 
         emit RevenueDeposited(propertyId, msg.sender, amount);
+        if (fee != 0) {
+            emit ManagementFeeCollected(propertyId, fee);
+        }
     }
 
     function depositRedemption(uint256 propertyId, uint256 amount) external nonReentrant {

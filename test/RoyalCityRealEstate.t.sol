@@ -277,6 +277,54 @@ contract RoyalCityRealEstateTest is Test {
         assertEq(realEstate.pendingRevenue(propertyId, secondInvestor), 0);
     }
 
+    function test_ManagementFeeSkimsRentalDeposit() public {
+        uint256 propertyId = _fullyFundProperty();
+        realEstate.finalizeFunding(propertyId);
+        realEstate.setManagementFeeBps(1_000);
+
+        uint256 treasuryBefore = usdc.balanceOf(treasury);
+        vm.prank(treasury);
+        realEstate.depositRevenue(propertyId, 100 * USDC);
+
+        assertEq(usdc.balanceOf(treasury), treasuryBefore - 90 * USDC);
+        assertEq(realEstate.getProperty(propertyId).revenueDeposited, 90 * USDC);
+
+        uint256 investorBefore = usdc.balanceOf(investor);
+        uint256 secondBefore = usdc.balanceOf(secondInvestor);
+        vm.prank(investor);
+        realEstate.claimRevenue(propertyId);
+        vm.prank(secondInvestor);
+        realEstate.claimRevenue(propertyId);
+
+        assertEq(usdc.balanceOf(investor), investorBefore + 54 * USDC);
+        assertEq(usdc.balanceOf(secondInvestor), secondBefore + 36 * USDC);
+    }
+
+    function test_FullManagementFeeCreditsShareholdersNothing() public {
+        uint256 propertyId = _fullyFundProperty();
+        realEstate.finalizeFunding(propertyId);
+        realEstate.setManagementFeeBps(10_000);
+
+        uint256 treasuryBefore = usdc.balanceOf(treasury);
+        vm.prank(treasury);
+        realEstate.depositRevenue(propertyId, 100 * USDC);
+
+        assertEq(usdc.balanceOf(treasury), treasuryBefore);
+        assertEq(realEstate.getProperty(propertyId).revenueDeposited, 0);
+        assertEq(realEstate.pendingRevenue(propertyId, investor), 0);
+    }
+
+    function test_RevertWhen_ManagementFeeAbove100Percent() public {
+        vm.expectRevert(RoyalCityRealEstate.InvalidAmount.selector);
+        realEstate.setManagementFeeBps(10_001);
+    }
+
+    function test_RevertWhen_OutsiderSetsManagementFee() public {
+        vm.prank(outsider);
+        vm.expectRevert();
+        realEstate.setManagementFeeBps(1_000);
+    }
+
     function test_RevertWhen_UnauthorizedAccountDepositsRevenue() public {
         uint256 propertyId = _fullyFundProperty();
         realEstate.finalizeFunding(propertyId);

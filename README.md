@@ -54,7 +54,7 @@ To reproduce locally, copy [`env.sample`](env.sample) to `.env` and follow the d
 - A property moves through `Draft`, `Funding`, `Funded`, `Cancelled`, and `Closed`.
 - Each property has a funding deadline, minimum investment, maximum per-investor investment, and per-property pause switch.
 - Cancelled funding rounds allow investors to refund their principal.
-- Funded properties can receive revenue deposits and distribute them pro rata by share balance.
+- Funded properties can receive revenue deposits and distribute them pro rata by share balance. A global `managementFeeBps` (default 0) is skimmed to treasury on `depositRevenue`; shareholders receive the remainder.
 - Closed properties can receive a redemption pool. A separate `RoyalCityNavOracle` publishes per-share NAV; `redeem` pays `shares * navPerShare` from that pool (pending revenue is paid first). A NAV older than 7 days cannot be used.
 - The share contract is a UUPS proxy. Users keep calling the proxy address. Only `DEFAULT_ADMIN_ROLE` can replace the implementation.
 - Admin, manager, compliance, and treasury permissions are separated with OpenZeppelin access control.
@@ -177,7 +177,7 @@ flowchart TD
 
 ## Roles
 
-- `DEFAULT_ADMIN_ROLE`: Can pause/unpause, manage roles, and upgrade the share-contract implementation. It uses delayed two-step transfer rules.
+- `DEFAULT_ADMIN_ROLE`: Can pause/unpause, manage roles, set `managementFeeBps`, and upgrade the share-contract implementation. It uses delayed two-step transfer rules.
 - `MANAGER_ROLE`: Can create properties, start/cancel/finalize funding, and close properties.
 - `COMPLIANCE_ROLE`: Can set `kycTier` (and `setWhitelist` as tier 1 / 0).
 - `TREASURY_ROLE`: Can deposit revenue and redemption funds.
@@ -226,12 +226,13 @@ The Timelock pattern means a Safe proposes a privileged action, waits `TIMELOCK_
 5. Investors approve USDC and call `invest(propertyId, shares)`.
 6. The contract rejects expired funding, below-minimum investments, above-maximum cumulative investments, and paused properties.
 7. If funding succeeds, manager calls `finalizeFunding`, which sends principal to treasury.
-8. Treasury deposits rental or other revenue with `depositRevenue`.
-9. Investors call `claimRevenue` to receive their pro rata revenue.
-10. If funding is cancelled before finalization, investors call `refund`.
-11. Manager closes a funded property with `closeProperty`.
-12. Treasury deposits a redemption pool with `depositRedemption`.
-13. Oracle publishes `setNav`. Investors call `redeem(propertyId, shares)` to burn shares and receive `shares * navPerShare` from the redemption pool (unclaimed revenue is settled automatically). Stale or missing NAV reverts.
+8. The default admin may set `managementFeeBps` (basis points, `10_000` = 100%, default `0`).
+9. Treasury deposits rental or other revenue with `depositRevenue`. The contract sends `amount * managementFeeBps / 10_000` to treasury and credits shareholders with the remainder.
+10. Investors call `claimRevenue` to receive their pro rata share of that remainder.
+11. If funding is cancelled before finalization, investors call `refund`.
+12. Manager closes a funded property with `closeProperty`.
+13. Treasury deposits a redemption pool with `depositRedemption`.
+14. Oracle publishes `setNav`. Investors call `redeem(propertyId, shares)` to burn shares and receive `shares * navPerShare` from the redemption pool (unclaimed revenue is settled automatically). Stale or missing NAV reverts. Redeem does not charge the management fee.
 
 ```mermaid
 flowchart TD
@@ -245,8 +246,9 @@ flowchart TD
   Decision -->|"target reached"| Finalize["finalizeFunding"]
   Decision -->|"cancelled"| Cancel["cancelFunding"]
   Finalize --> Principal["principal sent to treasury"]
-  Principal --> Revenue["treasury deposits revenue"]
-  Revenue --> Claim["investors claim pro rata revenue"]
+  Principal --> SetFee["admin sets managementFeeBps"]
+  SetFee --> Revenue["treasury depositRevenue"]
+  Revenue --> Claim["investors claim the post-fee remainder"]
   Finalize --> Close["closeProperty"]
   Close --> RedeemDeposit["depositRedemption"]
   RedeemDeposit --> SetNav["oracle setNav"]
@@ -422,7 +424,7 @@ This MVP keeps the on-chain design intentionally conservative:
 - Property terms can only be changed while the property is `Draft`; once funding starts, terms are locked.
 - Default admin ownership uses a delayed two-step transfer instead of direct `grantRole`.
 - `MANAGER_ROLE` should be assigned to Timelock for production so create/cancel/finalize/pause operations are delayed.
-- Revenue accounting uses cumulative revenue per share and does not iterate through all investors.
+- Revenue accounting uses cumulative revenue per share and does not iterate through all investors. `managementFeeBps` is taken only inside `depositRevenue`; invest, refund, claim, and redeem do not charge it.
 - External ERC20 movements use `SafeERC20` and mutating fund flows use `nonReentrant`.
 
 Before any production launch with real funds, the team should complete:
