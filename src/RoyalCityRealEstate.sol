@@ -2,17 +2,26 @@
 pragma solidity ^0.8.30;
 
 import {
-    AccessControlDefaultAdminRules
-} from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
+    AccessControlDefaultAdminRulesUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
-import {ERC1155Supply} from "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155Supply.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ERC1155Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC1155/ERC1155Upgradeable.sol";
+import {
+    ERC1155SupplyUpgradeable
+} from "@openzeppelin/contracts-upgradeable/token/ERC1155/extensions/ERC1155SupplyUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {IRoyalCityNavOracle} from "./IRoyalCityNavOracle.sol";
 
-contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, Pausable, ReentrancyGuard {
+contract RoyalCityRealEstate is
+    ERC1155SupplyUpgradeable,
+    AccessControlDefaultAdminRulesUpgradeable,
+    PausableUpgradeable,
+    ReentrancyGuard,
+    UUPSUpgradeable
+{
     using SafeERC20 for IERC20;
 
     // Property lifecycle is intentionally strict so refunds and principal withdrawal
@@ -48,9 +57,9 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
 
     uint256 internal constant REWARD_PRECISION = 1e24;
 
-    IERC20 public immutable PAYMENT_TOKEN;
+    IERC20 public PAYMENT_TOKEN;
     address public treasury;
-    uint256 public nextPropertyId = 1;
+    uint256 public nextPropertyId;
     IRoyalCityNavOracle public navOracle;
 
     mapping(uint256 propertyId => Property property) internal _properties; // Property terms and lifecycle
@@ -125,19 +134,32 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     event Redeemed(uint256 indexed propertyId, address indexed investor, uint256 shares, uint256 amount);
     event NavOracleUpdated(address indexed navOracle);
 
-    constructor(address paymentToken_, address treasury_, string memory defaultURI, uint48 defaultAdminDelay)
-        ERC1155(defaultURI)
-        AccessControlDefaultAdminRules(defaultAdminDelay, msg.sender)
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address paymentToken_, address treasury_, string memory defaultURI, uint48 defaultAdminDelay)
+        external
+        initializer
     {
         if (paymentToken_ == address(0) || treasury_ == address(0)) revert ZeroAddress();
 
+        __ERC1155_init(defaultURI);
+        __ERC1155Supply_init();
+        __AccessControlDefaultAdminRules_init(defaultAdminDelay, msg.sender);
+        __Pausable_init();
+
         PAYMENT_TOKEN = IERC20(paymentToken_);
         treasury = treasury_;
+        nextPropertyId = 1;
 
         _grantRole(MANAGER_ROLE, msg.sender);
         _grantRole(COMPLIANCE_ROLE, msg.sender);
         _grantRole(TREASURY_ROLE, treasury_);
     }
+
+    function _authorizeUpgrade(address) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     function setTreasury(address newTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newTreasury == address(0)) revert ZeroAddress();
@@ -460,7 +482,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     function supportsInterface(bytes4 interfaceId)
         public
         view
-        override(ERC1155, AccessControlDefaultAdminRules)
+        override(ERC1155Upgradeable, AccessControlDefaultAdminRulesUpgradeable)
         returns (bool)
     {
         return super.supportsInterface(interfaceId);
@@ -468,7 +490,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
 
     function _update(address from, address to, uint256[] memory ids, uint256[] memory values)
         internal
-        override(ERC1155Supply)
+        override(ERC1155SupplyUpgradeable)
     {
         // Settle revenue before balance changes so old and new holders receive the right split.
         // address(0) is a mint source or a burn destination, so that side has no holder to settle.

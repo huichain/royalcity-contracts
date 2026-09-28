@@ -5,6 +5,7 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {Test} from "forge-std/Test.sol";
 import {RoyalCityRealEstate} from "../src/RoyalCityRealEstate.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
+import {RoyalCityDeploy} from "./RoyalCityDeploy.sol";
 
 contract RoyalCityInvestmentHandler is Test {
     uint256 internal constant USDC_UNIT = 1e6;
@@ -66,7 +67,7 @@ contract RoyalCityInvariantTest is StdInvariant, Test {
 
     function setUp() public {
         usdc = new MockUSDC();
-        realEstate = new RoyalCityRealEstate(address(usdc), treasury, "ipfs://royalcity/{id}.json", 2 days);
+        realEstate = RoyalCityDeploy.deploy(address(usdc), treasury, "ipfs://royalcity/{id}.json", 2 days);
 
         propertyId = realEstate.createProperty(
             "ipfs://property-invariant", 100, 10 * USDC, 1_000 * USDC, 10 * USDC, 700 * USDC, block.timestamp + 30 days

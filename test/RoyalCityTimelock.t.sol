@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {RoyalCityRealEstate} from "../src/RoyalCityRealEstate.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
+import {RoyalCityDeploy} from "./RoyalCityDeploy.sol";
 
 contract RoyalCityTimelockTest is Test {
     uint256 internal constant USDC = 1e6;
@@ -24,7 +25,7 @@ contract RoyalCityTimelockTest is Test {
 
     function setUp() public {
         usdc = new MockUSDC();
-        realEstate = new RoyalCityRealEstate(address(usdc), treasury, "ipfs://royalcity/{id}.json", DEFAULT_ADMIN_DELAY);
+        realEstate = RoyalCityDeploy.deploy(address(usdc), treasury, "ipfs://royalcity/{id}.json", DEFAULT_ADMIN_DELAY);
 
         address[] memory proposers = new address[](1);
         proposers[0] = safeProposer;

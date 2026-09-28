@@ -2,9 +2,13 @@
 pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {RoyalCityRealEstate} from "../src/RoyalCityRealEstate.sol";
 import {RoyalCityNavOracle} from "../src/RoyalCityNavOracle.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
+import {RoyalCityDeploy} from "./RoyalCityDeploy.sol";
+import {RoyalCityRealEstateV2} from "./RoyalCityRealEstateV2.sol";
 
 contract RoyalCityRealEstateTest is Test {
     uint256 internal constant USDC = 1e6;
@@ -28,7 +32,7 @@ contract RoyalCityRealEstateTest is Test {
 
     function setUp() public {
         usdc = new MockUSDC();
-        realEstate = new RoyalCityRealEstate(address(usdc), treasury, "ipfs://royalcity/{id}.json", DEFAULT_ADMIN_DELAY);
+        realEstate = RoyalCityDeploy.deploy(address(usdc), treasury, "ipfs://royalcity/{id}.json", DEFAULT_ADMIN_DELAY);
         navOracle = new RoyalCityNavOracle(address(this));
         realEstate.setNavOracle(navOracle);
 
@@ -673,5 +677,43 @@ contract RoyalCityRealEstateTest is Test {
         realEstate.finalizeFunding(propertyId);
         realEstate.closeProperty(propertyId);
         navOracle.setNav(propertyId, DEFAULT_SHARE_PRICE);
+    }
+
+    function test_AdminCanUpgradeAndStateSurvives() public {
+        uint256 propertyId = realEstate.createProperty(
+            "ipfs://property-upgrade",
+            DEFAULT_TOTAL_SHARES,
+            DEFAULT_SHARE_PRICE,
+            DEFAULT_FUNDING_TARGET,
+            DEFAULT_MIN_INVESTMENT,
+            DEFAULT_MAX_INVESTMENT,
+            block.timestamp + 30 days
+        );
+
+        RoyalCityRealEstateV2 next = new RoyalCityRealEstateV2();
+        realEstate.upgradeToAndCall(address(next), "");
+
+        assertEq(RoyalCityRealEstateV2(address(realEstate)).version(), 2);
+        assertEq(address(realEstate.PAYMENT_TOKEN()), address(usdc));
+        assertEq(realEstate.treasury(), treasury);
+        assertEq(realEstate.getProperty(propertyId).totalShares, DEFAULT_TOTAL_SHARES);
+    }
+
+    function test_RevertWhen_OutsiderUpgrades() public {
+        RoyalCityRealEstateV2 next = new RoyalCityRealEstateV2();
+        bytes32 adminRole = realEstate.DEFAULT_ADMIN_ROLE();
+
+        vm.prank(outsider);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, outsider, adminRole)
+        );
+        realEstate.upgradeToAndCall(address(next), "");
+    }
+
+    function test_RevertWhen_ImplementationIsInitialized() public {
+        RoyalCityRealEstate implementation = new RoyalCityRealEstate();
+
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        implementation.initialize(address(usdc), treasury, "ipfs://royalcity/{id}.json", DEFAULT_ADMIN_DELAY);
     }
 }

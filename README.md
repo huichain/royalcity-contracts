@@ -56,6 +56,7 @@ To reproduce locally, copy [`env.sample`](env.sample) to `.env` and follow the d
 - Cancelled funding rounds allow investors to refund their principal.
 - Funded properties can receive revenue deposits and distribute them pro rata by share balance.
 - Closed properties can receive a redemption pool. A separate `RoyalCityNavOracle` publishes per-share NAV; `redeem` pays `shares * navPerShare` from that pool (pending revenue is paid first). A NAV older than 7 days cannot be used.
+- The share contract is a UUPS proxy. Users keep calling the proxy address. Only `DEFAULT_ADMIN_ROLE` can replace the implementation.
 - Admin, manager, compliance, and treasury permissions are separated with OpenZeppelin access control.
 - The default admin uses a delayed two-step transfer flow via `AccessControlDefaultAdminRules`.
 
@@ -166,7 +167,7 @@ flowchart TD
 - `test/RoyalCityInvariant.t.sol`: Invariant tests for funding accounting.
 - `test/RoyalCityTimelock.t.sol`: Timelock/Safe-style governance tests.
 - `test/mocks/MockUSDC.sol`: Local 6-decimal ERC20 payment token for tests.
-- `script/DeployRoyalCity.s.sol`: Deployment script.
+- `script/DeployRoyalCity.s.sol`: Deploys the share-contract implementation and the ERC-1967 proxy. Callers use the proxy.
 - `script/DeployRoyalCityTimelock.s.sol`: Timelock deployment script.
 - `script/ConfigureRoyalCityGovernance.s.sol`: Role migration and default-admin transfer starter.
 - `script/ScheduleRoyalCityAdminAcceptance.s.sol`: Schedules Timelock acceptance of default admin.
@@ -176,13 +177,13 @@ flowchart TD
 
 ## Roles
 
-- `DEFAULT_ADMIN_ROLE`: Can pause/unpause and manage roles. It uses delayed two-step transfer rules.
+- `DEFAULT_ADMIN_ROLE`: Can pause/unpause, manage roles, and upgrade the share-contract implementation. It uses delayed two-step transfer rules.
 - `MANAGER_ROLE`: Can create properties, start/cancel/finalize funding, and close properties.
 - `COMPLIANCE_ROLE`: Can set `kycTier` (and `setWhitelist` as tier 1 / 0).
 - `TREASURY_ROLE`: Can deposit revenue and redemption funds.
 - `ORACLE_ROLE` lives on `RoyalCityNavOracle`, not on the share contract. That contract publishes per-share NAV; `RoyalCityRealEstate` only stores the oracle address and reads it inside `redeem`.
 
-The constructor sets the deployer as the initial default admin with a configurable admin transfer delay. It also grants manager and compliance roles to the deployer, and treasury role to the configured treasury address.
+`initialize` runs once through the proxy. It sets the deployer as the initial default admin with a configurable admin transfer delay, grants manager and compliance roles to the deployer, and grants the treasury role to the configured treasury address. The implementation contract itself cannot be initialized.
 
 ```mermaid
 flowchart TD
@@ -375,11 +376,11 @@ Use this runbook for testnet rehearsals before any production deployment.
 2. Prepare operational wallets.
    - Use a Safe multisig for admin and treasury roles.
    - Avoid leaving `DEFAULT_ADMIN_ROLE` on a personal deployer wallet after setup.
-3. Deploy the RoyalCity contract.
+3. Deploy the RoyalCity proxy.
    - Set `PRIVATE_KEY`, `PAYMENT_TOKEN`, `TREASURY`, `BASE_URI`, and `DEFAULT_ADMIN_DELAY`.
    - Use a non-zero `DEFAULT_ADMIN_DELAY` for production rehearsals. The examples use `172800` seconds.
-   - Run the deploy script with `--broadcast`.
-   - Verify the contract on the chain explorer.
+   - Run the deploy script with `--broadcast`. It deploys the implementation and the ERC-1967 proxy, and initializes the proxy.
+   - Users, allowances, and `setNavOracle` use the proxy address. Verify that address on the chain explorer.
    - Deploy `RoyalCityNavOracle` separately and call `setNavOracle`. The share-contract deploy script does not do this.
 4. Deploy Timelock.
    - Set proposer to the operations/admin Safe.
