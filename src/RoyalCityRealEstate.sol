@@ -10,6 +10,7 @@ import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import {ERC1155Supply} from "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155Supply.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IRoyalCityNavOracle} from "./IRoyalCityNavOracle.sol";
 
 contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -50,14 +51,15 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     IERC20 public immutable PAYMENT_TOKEN;
     address public treasury;
     uint256 public nextPropertyId = 1;
+    IRoyalCityNavOracle public navOracle;
 
-    mapping(uint256 propertyId => Property property) internal _properties;
-    mapping(address account => bool approved) public whitelisted;
-    mapping(address account => uint8 tier) public kycTier;
-    mapping(uint256 propertyId => mapping(address account => uint256 amount)) public investedAmount;
-    mapping(uint256 propertyId => uint256 rewardPerShare) public revenuePerShare;
-    mapping(uint256 propertyId => mapping(address account => uint256 rewardDebt)) public userRevenueDebt;
-    mapping(uint256 propertyId => mapping(address account => uint256 accruedRevenue)) public accruedRevenue;
+    mapping(uint256 propertyId => Property property) internal _properties; // Property terms and lifecycle
+    mapping(address account => bool approved) public whitelisted; // True when kycTier is above 0
+    mapping(address account => uint8 tier) public kycTier; // Compliance tier; 0 means not approved
+    mapping(uint256 propertyId => mapping(address account => uint256 amount)) public investedAmount; // PAYMENT_TOKEN paid during funding; basis for refunds
+    mapping(uint256 propertyId => uint256 rewardPerShare) public revenuePerShare; // Cumulative revenue per share, scaled by REWARD_PRECISION
+    mapping(uint256 propertyId => mapping(address account => uint256 rewardDebt)) public userRevenueDebt; // revenuePerShare already settled for this account
+    mapping(uint256 propertyId => mapping(address account => uint256 accruedRevenue)) public accruedRevenue; // Settled revenue not yet claimed
 
     error ZeroAddress();
     error InvalidProperty();
@@ -81,6 +83,8 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     error NothingToRefund();
     error NothingToClaim();
     error NothingToRedeem();
+    error NavOracleNotSet();
+    error InsufficientRedemptionFunds();
     error NoShares();
     error UnauthorizedDepositor();
 
@@ -119,6 +123,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
     event RevenueClaimed(uint256 indexed propertyId, address indexed investor, uint256 amount);
     event RedemptionDeposited(uint256 indexed propertyId, address indexed depositor, uint256 amount);
     event Redeemed(uint256 indexed propertyId, address indexed investor, uint256 shares, uint256 amount);
+    event NavOracleUpdated(address indexed navOracle);
 
     constructor(address paymentToken_, address treasury_, string memory defaultURI, uint48 defaultAdminDelay)
         ERC1155(defaultURI)
@@ -164,6 +169,12 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
         property.minKycTier = minKycTier_;
 
         emit PropertyMinKycTierUpdated(propertyId, minKycTier_);
+    }
+
+    function setNavOracle(IRoyalCityNavOracle navOracle_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (address(navOracle_) == address(0)) revert ZeroAddress();
+        navOracle = navOracle_;
+        emit NavOracleUpdated(address(navOracle_));
     }
 
     function createProperty(
@@ -388,13 +399,12 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
             emit RevenueClaimed(propertyId, msg.sender, revenueAmount);
         }
 
-        if (property.redemptionPool == 0) revert NothingToRedeem();
+        if (address(navOracle) == address(0)) revert NavOracleNotSet();
+        uint256 price = navOracle.navPerShare(propertyId);
 
-        uint256 supply = totalSupply(propertyId);
-        if (supply == 0) revert NoShares();
-
-        uint256 payout = (shares * property.redemptionPool) / supply;
+        uint256 payout = shares * price;
         if (payout == 0) revert NothingToRedeem();
+        if (property.redemptionPool < payout) revert InsufficientRedemptionFunds();
 
         property.redemptionPool -= payout;
         _burn(msg.sender, propertyId, shares);
@@ -461,6 +471,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
         override(ERC1155Supply)
     {
         // Settle revenue before balance changes so old and new holders receive the right split.
+        // address(0) is a mint source or a burn destination, so that side has no holder to settle.
         if (from != address(0)) {
             _settleBatch(ids, from);
         }
@@ -468,6 +479,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
             _settleBatch(ids, to);
         }
 
+        // Restrictions apply to transfers only. Mint and burn stay open for invest, refund, and redeem.
         if (from != address(0) && to != address(0)) {
             if (paused()) revert EnforcedPause();
             // RWA shares are only transferable after funding has been finalized.
@@ -484,6 +496,7 @@ contract RoyalCityRealEstate is ERC1155Supply, AccessControlDefaultAdminRules, P
 
         super._update(from, to, ids, values);
 
+        // Align debt with the current per-share revenue so the new balance does not earn historical revenue.
         if (from != address(0)) {
             _syncBatchDebt(ids, from);
         }

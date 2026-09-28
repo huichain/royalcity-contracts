@@ -53,7 +53,7 @@ To reproduce locally, copy [`env.sample`](env.sample) to `.env` and follow the d
 - Each property has a funding deadline, minimum investment, maximum per-investor investment, and per-property pause switch.
 - Cancelled funding rounds allow investors to refund their principal.
 - Funded properties can receive revenue deposits and distribute them pro rata by share balance.
-- Closed properties can receive a redemption pool deposit; investors burn shares via `redeem` for a pro-rata payout (pending revenue is paid first).
+- Closed properties can receive a redemption pool. A separate `RoyalCityNavOracle` publishes per-share NAV; `redeem` pays `shares * navPerShare` from that pool (pending revenue is paid first). A NAV older than 7 days cannot be used.
 - Admin, manager, compliance, and treasury permissions are separated with OpenZeppelin access control.
 - The default admin uses a delayed two-step transfer flow via `AccessControlDefaultAdminRules`.
 
@@ -158,6 +158,7 @@ flowchart TD
 ## Files
 
 - `src/RoyalCityRealEstate.sol`: Main ERC1155 property share contract.
+- `src/RoyalCityNavOracle.sol`: Separate permissioned NAV publisher. The share contract only stores its address.
 - `test/RoyalCityRealEstate.t.sol`: Core behavior tests.
 - `test/RoyalCityInvariant.t.sol`: Invariant tests for funding accounting.
 - `test/RoyalCityTimelock.t.sol`: Timelock/Safe-style governance tests.
@@ -175,7 +176,8 @@ flowchart TD
 - `DEFAULT_ADMIN_ROLE`: Can pause/unpause and manage roles. It uses delayed two-step transfer rules.
 - `MANAGER_ROLE`: Can create properties, start/cancel/finalize funding, and close properties.
 - `COMPLIANCE_ROLE`: Can set `kycTier` (and `setWhitelist` as tier 1 / 0).
-- `TREASURY_ROLE`: Can deposit revenue.
+- `TREASURY_ROLE`: Can deposit revenue and redemption funds.
+- `ORACLE_ROLE` lives on `RoyalCityNavOracle`, not on the share contract. That contract publishes per-share NAV; `RoyalCityRealEstate` only stores the oracle address and reads it inside `redeem`.
 
 The constructor sets the deployer as the initial default admin with a configurable admin transfer delay. It also grants manager and compliance roles to the deployer, and treasury role to the configured treasury address.
 
@@ -225,7 +227,7 @@ The Timelock pattern means a Safe proposes a privileged action, waits `TIMELOCK_
 10. If funding is cancelled before finalization, investors call `refund`.
 11. Manager closes a funded property with `closeProperty`.
 12. Treasury deposits a redemption pool with `depositRedemption`.
-13. Investors call `redeem(propertyId, shares)` to burn shares and receive pro-rata PAYMENT_TOKEN (unclaimed revenue is settled automatically).
+13. Oracle publishes `setNav`. Investors call `redeem(propertyId, shares)` to burn shares and receive `shares * navPerShare` from the redemption pool (unclaimed revenue is settled automatically). Stale or missing NAV reverts.
 
 ```mermaid
 flowchart TD

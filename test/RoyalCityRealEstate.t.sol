@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {RoyalCityRealEstate} from "../src/RoyalCityRealEstate.sol";
+import {RoyalCityNavOracle} from "../src/RoyalCityNavOracle.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 contract RoyalCityRealEstateTest is Test {
@@ -16,6 +17,7 @@ contract RoyalCityRealEstateTest is Test {
 
     MockUSDC internal usdc;
     RoyalCityRealEstate internal realEstate;
+    RoyalCityNavOracle internal navOracle;
 
     address internal treasury = address(0xA11CE);
     address internal newTreasury = address(0xA22CE);
@@ -27,6 +29,8 @@ contract RoyalCityRealEstateTest is Test {
     function setUp() public {
         usdc = new MockUSDC();
         realEstate = new RoyalCityRealEstate(address(usdc), treasury, "ipfs://royalcity/{id}.json", DEFAULT_ADMIN_DELAY);
+        navOracle = new RoyalCityNavOracle(address(this));
+        realEstate.setNavOracle(navOracle);
 
         realEstate.setWhitelist(investor, true);
         realEstate.setWhitelist(secondInvestor, true);
@@ -480,7 +484,7 @@ contract RoyalCityRealEstateTest is Test {
         uint256 propertyId = _closeFundedProperty();
 
         vm.prank(investor);
-        vm.expectRevert(RoyalCityRealEstate.NothingToRedeem.selector);
+        vm.expectRevert(RoyalCityRealEstate.InsufficientRedemptionFunds.selector);
         realEstate.redeem(propertyId, 10);
     }
 
@@ -536,6 +540,7 @@ contract RoyalCityRealEstateTest is Test {
         realEstate.depositRevenue(propertyId, 100 * USDC);
 
         realEstate.closeProperty(propertyId);
+        navOracle.setNav(propertyId, DEFAULT_SHARE_PRICE);
 
         vm.prank(treasury);
         realEstate.depositRedemption(propertyId, 1_000 * USDC);
@@ -545,7 +550,7 @@ contract RoyalCityRealEstateTest is Test {
         vm.prank(investor);
         realEstate.redeem(propertyId, 60);
 
-        // 60% of 100 revenue + 60% of 1000 redemption
+        // 60 unclaimed revenue + 60 shares * 10 USDC NAV
         assertEq(usdc.balanceOf(investor), before + 60 * USDC + 600 * USDC);
         assertEq(realEstate.pendingRevenue(propertyId, investor), 0);
         assertEq(realEstate.balanceOf(investor, propertyId), 0);
@@ -599,6 +604,47 @@ contract RoyalCityRealEstateTest is Test {
         assertEq(realEstate.getProperty(propertyId).redemptionPool, 1_000 * USDC);
     }
 
+    function test_RevertWhen_RedeemWithoutNav() public {
+        uint256 propertyId = _fullyFundProperty();
+        realEstate.finalizeFunding(propertyId);
+        realEstate.closeProperty(propertyId);
+
+        vm.prank(treasury);
+        realEstate.depositRedemption(propertyId, 1_000 * USDC);
+
+        vm.prank(investor);
+        vm.expectRevert(RoyalCityNavOracle.NavNotSet.selector);
+        realEstate.redeem(propertyId, 10);
+    }
+
+    function test_RevertWhen_NavIsStale() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.prank(treasury);
+        realEstate.depositRedemption(propertyId, 1_000 * USDC);
+
+        vm.warp(block.timestamp + 7 days + 1);
+
+        vm.prank(investor);
+        vm.expectRevert(RoyalCityNavOracle.StaleNav.selector);
+        realEstate.redeem(propertyId, 10);
+    }
+
+    function test_RevertWhen_NavMovesTooFar() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.expectRevert(RoyalCityNavOracle.NavDeviationExceeded.selector);
+        navOracle.setNav(propertyId, DEFAULT_SHARE_PRICE * 2);
+    }
+
+    function test_OutsiderCannotSetNav() public {
+        uint256 propertyId = _closeFundedProperty();
+
+        vm.prank(outsider);
+        vm.expectRevert();
+        navOracle.setNav(propertyId, DEFAULT_SHARE_PRICE);
+    }
+
     function _createFundingProperty() internal returns (uint256 propertyId) {
         propertyId = realEstate.createProperty(
             "ipfs://property-1",
@@ -626,5 +672,6 @@ contract RoyalCityRealEstateTest is Test {
         propertyId = _fullyFundProperty();
         realEstate.finalizeFunding(propertyId);
         realEstate.closeProperty(propertyId);
+        navOracle.setNav(propertyId, DEFAULT_SHARE_PRICE);
     }
 }
