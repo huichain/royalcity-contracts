@@ -13,6 +13,8 @@ RoyalCity Contracts is a Foundry-based MVP for tokenized real estate investment 
 
 **Status:** **End-to-end lifecycle verified on-chain** for property `#1` — create → fund to 100,000 mUSDC target → finalize → deposit 1,000 mUSDC revenue → claim pro-rata (500 mUSDC each to investor and treasury).
 
+That address is the earlier MVP. KYC tiers and `RoyalCityNavOracle` are in the current source and are not deployed at this address.
+
 Property `#1` terms: 1,000 shares at 100 mUSDC/share; per-investor cap 50,000 mUSDC (two whitelisted wallets filled the round).
 
 ### Deployment
@@ -159,6 +161,7 @@ flowchart TD
 
 - `src/RoyalCityRealEstate.sol`: Main ERC1155 property share contract.
 - `src/RoyalCityNavOracle.sol`: Separate permissioned NAV publisher. The share contract only stores its address.
+- `src/IRoyalCityNavOracle.sol`: Read interface used by `redeem`.
 - `test/RoyalCityRealEstate.t.sol`: Core behavior tests.
 - `test/RoyalCityInvariant.t.sol`: Invariant tests for funding accounting.
 - `test/RoyalCityTimelock.t.sol`: Timelock/Safe-style governance tests.
@@ -245,7 +248,8 @@ flowchart TD
   Revenue --> Claim["investors claim pro rata revenue"]
   Finalize --> Close["closeProperty"]
   Close --> RedeemDeposit["depositRedemption"]
-  RedeemDeposit --> Redeem["investors redeem shares"]
+  RedeemDeposit --> SetNav["oracle setNav"]
+  SetNav --> Redeem["investors redeem shares * navPerShare"]
   Cancel --> Refund["investors refund principal"]
 ```
 
@@ -376,6 +380,7 @@ Use this runbook for testnet rehearsals before any production deployment.
    - Use a non-zero `DEFAULT_ADMIN_DELAY` for production rehearsals. The examples use `172800` seconds.
    - Run the deploy script with `--broadcast`.
    - Verify the contract on the chain explorer.
+   - Deploy `RoyalCityNavOracle` separately and call `setNavOracle`. The share-contract deploy script does not do this.
 4. Deploy Timelock.
    - Set proposer to the operations/admin Safe.
    - Use open executor `address(0)` or a dedicated executor bot wallet.
@@ -398,7 +403,7 @@ Use this runbook for testnet rehearsals before any production deployment.
    - Whitelist test investors.
    - Approve payment token.
    - Invest within limits.
-   - Test expired funding, paused property, cancellation, refund, finalization, revenue deposit, and claim.
+   - Test expired funding, paused property, cancellation, refund, finalization, revenue deposit, claim, `setNav`, and redeem.
 8. Before mainnet.
    - Run the full test suite and invariant tests.
    - Complete independent audit and fix review findings.
